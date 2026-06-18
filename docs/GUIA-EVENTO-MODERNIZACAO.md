@@ -193,8 +193,12 @@ Tudo num **novo Resource Group** PaaS, em **Central India** (mesma região da ap
 - [ ] **Conta Azure ativa** — a mesma do guia anterior.
 - [ ] **Bloco de notas** com o que você anotou na fase VM: `IP_DB` (privado da `vm-data`), `adminsql`/`Partiunuvem@2026`, `JWT_SECRET`, e o seu **domínio** (se fez a Fase 6 das VMs).
 - [ ] **Ferramentas de migração** (baixe agora, instale nas fases indicadas):
-  - **App Service Migration Assistant** — [appmigration.microsoft.com](https://appmigration.microsoft.com/) (instala na `vm-bend` na Fase 3 e na `vm-fend` na Fase 4).
+  - **(Opcional) App Service Migration Assistant** — [appmigration.microsoft.com](https://appmigration.microsoft.com/). Só para ver o *assessment* (a publicação é por **zip deploy**, Fases 3.5/4.2). Se for usar, instala na `vm-bend`/`vm-fend`.
+  - **Azure CLI** (se for publicar pela **Opção A**, na própria VM) — `winget install -e --id Microsoft.AzureCLI` ou [aka.ms/installazurecliwindows](https://aka.ms/installazurecliwindows). _Quem usar o **Cloud Shell** (Opção B) não precisa instalar nada._
   - **Azure Data Studio** — [aka.ms/azuredatastudio](https://aka.ms/azuredatastudio) (instala na `vm-data` na Fase 5; a extension **Azure SQL Migration** é adicionada dentro dele).
+- [ ] **(Opcional) Projeto do Azure Migrate (em branco)** — só necessário se você for rodar o **App Service Migration Assistant** para ver o *assessment*. Portal → busca **Azure Migrate** → **Create project** → **Resource group:** `rg-prd-tik-paas-cin-001` · **Project name:** `migr-prd-tk-cin-001` · **Geography:** a mais próxima → **Create**.
+
+> ℹ️ **Por que é opcional agora:** neste guia a **publicação é feita por zip deploy** (Fases 3.5/4.2), que **não usa** o assistant nem o projeto. O projeto do Azure Migrate só entra **se você quiser rodar o assistant pelo valor didático do assessment** — e, nesse caso, ele é **pré-requisito**: a versão atual do assistant exige um projeto na assinatura (mesmo para app único) e **trava sem ele** na tela "Azure Migrate Hub". O projeto fica **em branco** — sem appliance, sem discovery; é só o "guarda-chuva" do assessment. Como a API é **Node**, o assistant **só assessa, não publica** (ver Fase 3.5) — por isso o deploy real é sempre o zip.
 
 **Alerta de orçamento:** Portal → **Cost Management → Budgets → + Add** → **$20/mês**, alerta em 80% e 100% → seu e-mail. (O PaaS é barato, mas o hábito é bom.)
 
@@ -221,6 +225,7 @@ Mesmo padrão `<tipo>-<ambiente>-<carga>-<região>-<instância>` da fase VM. **U
 | Azure SQL (servidor lógico) | `sql-prd-tk-cin-001` | Central India | **nome global** |
 | Azure SQL Database | `FIFA2026Tickets` | — | mesmo nome do banco da VM |
 | Database Migration Service | `dms-prd-tk-cin-001` | Central India | criado pela extension na Fase 5 |
+| Projeto Azure Migrate (em branco) | `migr-prd-tk-cin-001` | Geography mais próxima | **opcional** — só se rodar o assistant para o assessment; sem appliance/discovery. Publicação real é por zip deploy |
 
 #### 1.2 Ordem da migração (e por quê)
 
@@ -313,15 +318,44 @@ No `app-prd-tk-bend-cin-001` → **Settings → Environment variables → App se
 
 > ⚠️ **Não existe `PORT=80` aqui.** No App Service **quem define a porta é a plataforma** — o iisnode injeta a porta certa e sua API já lê `process.env.PORT`. Por isso **não** adicione `PORT` nem `HOST` nas App Settings (deixe a plataforma mandar).
 
-#### 3.5 Publicar a aplicação com o App Service Migration Assistant
+#### 3.5 Publicar a aplicação (zip deploy)
 
-1. **RDP na `vm-bend`** (via jump host `vm-fend`, como na fase VM) e instale lá o **App Service Migration Assistant** (baixado na Fase 0).
-2. Abra o assistant → ele lista os **sites do IIS** → selecione **`FIFA2026-API`**.
-3. **Readiness check** → revise o relatório (este é o *assessment* do app da Fase 2).
-4. **Sign in** no Azure → em vez de criar um site novo, **selecione o Web App existente** `app-prd-tk-bend-cin-001` como destino → **Migrate**.
-5. O assistant empacota o conteúdo de `C:\inetpub\wwwroot\fifa2026-api` (incluindo `web.config` e `node_modules`) e publica no Web App.
+> 🧩 **Por que não publicar pelo App Service Migration Assistant?** O assistant **avalia** qualquer site IIS e envia o *assessment* para o projeto do Azure Migrate (a tela **"Azure Migrate Hub"** → *Sending data complete*), mas a etapa de **publicar o conteúdo é só para .NET**. Como a API é **Node**, o assistant **vai até o assessment e para** — não aparece botão de finalizar/`Migrate`. Então: deixe o assistant rodar o assessment se quiser (é didático e popula o projeto do Azure Migrate), mas **quem publica o Node é o zip deploy** abaixo. Este é o método da **"linha A"** — mesmo resultado que o assistant daria para um app .NET.
 
-> 🧩 **O assistant é focado em ASP.NET — e a minha API é Node?** Ele lida muito bem com o **empacotamento do site IIS** (arquivos + bindings + `web.config`). Para a API Node, depois de publicar **confirme** que o runtime do Web App está em **Node** (Fase 3.1) e que o `web.config` chegou. _Plano B (se o fluxo do assistant não fechar para o seu caso):_ publique o mesmo conteúdo por **zip deploy** — na `vm-bend`, compacte a pasta e rode `az webapp deploy -g rg-prd-tik-paas-cin-001 -n app-prd-tk-bend-cin-001 --src-path fifa2026-api.zip --type zip`. O resultado é idêntico.
+**Passo 1 — Empacotar o app (na `vm-bend`, via RDP pelo jump host `vm-fend`):**
+
+```powershell
+cd C:\inetpub\wwwroot
+Compress-Archive -Path .\fifa2026-api\* -DestinationPath .\fifa2026-api.zip -Force
+```
+
+> ⚠️ O `\fifa2026-api\*` (com `\*`) é proposital: garante que `web.config`, `src/` e `node_modules` fiquem na **raiz** do zip — **não** dentro de uma subpasta `fifa2026-api/`. Se aninhar, o App Service não acha o `web.config` e a API não sobe.
+
+**Passo 2 — Publicar.** Escolha **uma** das duas formas:
+
+**▶️ Opção A — Azure CLI na própria VM** (mais direta, pois o zip já está local). Requer o Azure CLI na `vm-bend` — se não tiver: `winget install -e --id Microsoft.AzureCLI` (ou o MSI em [aka.ms/installazurecliwindows](https://aka.ms/installazurecliwindows)), e feche/reabra o PowerShell.
+
+```powershell
+az login --tenant <TENANT_ID>                       # se o navegador da VM travar: az login --use-device-code --tenant <TENANT_ID>
+az account set --subscription "<SUBSCRIPTION_ID_ou_NOME>"
+az webapp deploy -g rg-prd-tik-paas-cin-001 -n app-prd-tk-bend-cin-001 --src-path .\fifa2026-api.zip --type zip
+```
+
+**▶️ Opção B — Azure Cloud Shell** (o aluno **não instala nada** na VM). Abra o **Cloud Shell** ([shell.azure.com](https://shell.azure.com) ou o ícone `>_` no Portal) — ele já vem **autenticado** e com `az`/Az PowerShell prontos (não precisa de `az login`/tenant).
+
+1. Na **`vm-bend`**, gere o `fifa2026-api.zip` (Passo 1 acima).
+2. No **Cloud Shell**: botão **Upload/Download files → Upload** → selecione o `fifa2026-api.zip` (ele cai no seu diretório home do Cloud Shell).
+3. No **Cloud Shell** (Bash):
+   ```bash
+   az account set --subscription "<SUBSCRIPTION_ID_ou_NOME>"
+   az webapp deploy -g rg-prd-tik-paas-cin-001 -n app-prd-tk-bend-cin-001 --src-path ./fifa2026-api.zip --type zip
+   ```
+
+> 💡 **Qual opção escolher?** O **Cloud Shell (B)** dispensa instalar Azure CLI/módulo na VM e já vem logado — porém exige **subir o zip** primeiro (ele inclui `node_modules`, então tem dezenas de MB; em rede de evento o upload pode demorar). A **CLI na VM (A)** evita o upload (o zip já está local), mas exige instalar o Azure CLI uma vez. Para turma grande sem querer instalar nada, **B**; para quem já tem a CLI ou prioriza velocidade, **A**.
+
+> 📋 **Descobrir tenant e subscription:** `az account show --query "{tenant:tenantId, subscription:id, nome:name}" -o table`. No Portal: **Microsoft Entra ID** mostra o *Tenant ID*; **Subscriptions** mostra o *Subscription ID*.
+
+> ✅ **Depois de publicar (qualquer opção):** confirme no Portal que o Web App está com **Runtime = Node 20 / OS = Windows** (Fase 3.1) e que o `web.config` chegou (Kudu → `site/wwwroot/`). A validação funcional é a Fase 3.6.
 
 #### 3.6 Testar o backend novo (isolado, pelo endereço do Web App)
 
@@ -365,13 +399,37 @@ A `vm-fend` ainda serve o site e faz proxy `/api/*` para a `vm-bend`. Troque o d
 
 > 💡 **Mesmo plano, dois apps.** O App Service Plan é o "servidor"; cada Web App é um "site" nele. B1 acomoda os dois tranquilamente — você não paga a mais por isso.
 
-#### 4.2 Publicar o conteúdo com o App Service Migration Assistant
+#### 4.2 Publicar o conteúdo (zip deploy)
 
-1. **RDP na `vm-fend`** → instale o **App Service Migration Assistant**.
-2. Selecione o site **`FIFA2026-Web`** → **readiness** → **Sign in** → destino = `app-prd-tk-fend-cin-001` → **Migrate**.
-3. Ele publica `C:\inetpub\wwwroot\fifa2026-web` (HTML/JS/CSS + `web.config`).
+> 🧩 **Mesmo método do backend (linha A).** O frontend é **estático** (HTML/JS/CSS + `web.config`), não um framework Node — então, diferente do backend, o assistant **até conseguiria** publicá-lo. Mas, por **consistência** (e para não depender do comportamento da ferramenta), usamos o **mesmo zip deploy** da Fase 3.5 aqui — trocando só a pasta e o nome do Web App.
 
-> 🧩 **Plano B (zip deploy), se preferir:** compacte a pasta `fifa2026-web` e `az webapp deploy -g rg-prd-tik-paas-cin-001 -n app-prd-tk-fend-cin-001 --src-path fifa2026-web.zip --type zip`.
+**Passo 1 — Empacotar (na `vm-fend`, via RDP):**
+
+```powershell
+cd C:\inetpub\wwwroot
+Compress-Archive -Path .\fifa2026-web\* -DestinationPath .\fifa2026-web.zip -Force
+```
+
+> ⚠️ Igual ao backend: o `\*` mantém o `web.config` e os arquivos estáticos na **raiz** do zip.
+
+**Passo 2 — Publicar** (escolha **A** ou **B**, exatamente como na Fase 3.5):
+
+**▶️ Opção A — Azure CLI na `vm-fend`:**
+```powershell
+az login --tenant <TENANT_ID>                       # ou: az login --use-device-code --tenant <TENANT_ID>
+az account set --subscription "<SUBSCRIPTION_ID_ou_NOME>"
+az webapp deploy -g rg-prd-tik-paas-cin-001 -n app-prd-tk-fend-cin-001 --src-path .\fifa2026-web.zip --type zip
+```
+
+**▶️ Opção B — Azure Cloud Shell** (sem instalar nada): gere o zip na `vm-fend`, **Upload** no Cloud Shell, e:
+```bash
+az account set --subscription "<SUBSCRIPTION_ID_ou_NOME>"
+az webapp deploy -g rg-prd-tik-paas-cin-001 -n app-prd-tk-fend-cin-001 --src-path ./fifa2026-web.zip --type zip
+```
+
+> 💡 O front é **bem mais leve** que o backend (não tem `node_modules` — é só o build estático), então no Cloud Shell o **upload é rápido**. Aqui a Opção B costuma ser a mais cômoda.
+
+> ⏭️ **Ainda falta o proxy `/api`.** Publicar o estático não basta: o `/api/*` só passa a funcionar depois do **`applicationHost.xdt`** da Fase 4.4. Não pule.
 
 #### 4.3 Confirmar o destino do proxy no `web.config`
 
