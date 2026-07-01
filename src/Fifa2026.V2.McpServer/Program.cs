@@ -1,4 +1,5 @@
 using Fifa2026.V2.McpServer.Data;
+using Fifa2026.V2.McpServer.Infrastructure;
 using Fifa2026.V2.McpServer.Llm;
 using Fifa2026.V2.McpServer.Tools;
 
@@ -64,6 +65,13 @@ builder.Services
 builder.Services.AddApplicationInsightsTelemetry();
 
 var app = builder.Build();
+
+// Story 4.2 (ADE-009 Inv 1) — trava X-Gateway-Key ANTES das rotas de negócio (/mcp, /llm).
+// Prova que a request veio do gateway (fail-closed quando o segredo está configurado; legado
+// quando vazio). Fica ANTES dos MapMcp/MapLlmProxy para short-circuitar 401 sem processar a
+// rota; o /health é isento dentro do próprio middleware (AC-8). O gateway segue o guardião
+// ÚNICO do JWT (ADE-004): isto prova a ORIGEM, não valida o token.
+app.UseMiddleware<GatewayKeyValidationMiddleware>();
 
 // Health endpoint para smoke test / Container App health probe (paridade com o gateway).
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "mcp-server" }));

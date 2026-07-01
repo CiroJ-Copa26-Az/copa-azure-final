@@ -1,4 +1,5 @@
 using Fifa2026.V2.Functions.Data;
+using Fifa2026.V2.Functions.Infrastructure;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -8,7 +9,14 @@ using Microsoft.Extensions.Logging;
 // ConfigureFunctionsWebApplication enables ASP.NET Core integration
 // (HttpRequest/IActionResult) in HTTP triggers.
 var host = new HostBuilder()
-    .ConfigureFunctionsWebApplication()
+    .ConfigureFunctionsWebApplication(workerBuilder =>
+    {
+        // Story 4.2 (ADE-009 Inv 1) — trava X-Gateway-Key nas Functions HTTP F1 (fecha o
+        // P0 do bypass). Só invocações HTTP-triggered são avaliadas; a Service Bus-triggered
+        // (PurchaseConsumerFunction) passa direto (sem HttpContext). Gating por config
+        // (segredo vazio = legado, preserva labs sem gateway — Oitavas/F1).
+        workerBuilder.UseMiddleware<GatewayKeyValidationMiddleware>();
+    })
     .ConfigureServices(services =>
     {
         // Application Insights — distributed tracing (W3C Trace Context, ADE-000 Inv 5).

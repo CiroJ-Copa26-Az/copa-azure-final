@@ -33,13 +33,34 @@ const string EntraOidHeader = "X-Entra-OID";            // Story 2.3 AC-7 / ADE-
 const string OidClaim = "oid";
 const string OidClaimUri = "http://schemas.microsoft.com/identity/claims/objectidentifier";
 
-// Quartas / "admin 100% workforce" — header de shared secret e id do cluster v1.
-// O gateway prova ao backend Node/Express v1 que a request administrativa passou pelo
-// guardião (e não é spoof). Lido de Gateway:AdminSharedSecret (App Setting
-// Gateway__AdminSharedSecret; vazio no repo = injeção desligada, igual ao backend).
+// Quartas / "admin 100% workforce" + EPIC-004 Story 4.2 (ADE-009 Inv 1) — header de
+// shared secret (X-Gateway-Key) e os IDs dos clusters que o recebem. O gateway prova a
+// cada backend que a request passou pelo guardião (e não é spoof). Lido de
+// Gateway:AdminSharedSecret (App Setting Gateway__AdminSharedSecret; agora via KV
+// reference resolvida pela MI — Story 4.1 AC-12). Vazio no repo = injeção desligada,
+// igual ao backend (compatibilidade retroativa: labs sem gateway — Oitavas/F1).
+//
+// Story 4.2 (ADE-009 Inv 1): a injeção deixa de ser só no backend-v1 e passa a cobrir
+// TAMBÉM os clusters functions-f1 e mcp-server — fechando o P0 do bypass (um curl
+// forjando X-Entra-OID direto na Function/McpServer não tem o X-Gateway-Key e é
+// rejeitado no destino; via gateway a request carrega o segredo real). O cluster
+// flow-events fica FORA: a ADE-009 Inv 1 lista só "v1, Functions F1, McpServer" —
+// nenhuma extensão além do escopo decidido pela ADE (Art. IV).
 const string GatewayKeyHeader = "X-Gateway-Key";
 const string BackendV1ClusterId = "backend-v1";
+const string FunctionsF1ClusterId = "functions-f1";
+const string McpServerClusterId = "mcp-server";
 var adminSharedSecret = builder.Configuration["Gateway:AdminSharedSecret"];
+
+// Conjunto dos clusters CONFIÁVEIS que recebem o X-Gateway-Key injetado (ADE-009 Inv 1).
+// OrdinalIgnoreCase preserva a mesma semântica case-insensitive que o StringComparison
+// usado antes só para o backend-v1. flow-events NÃO está aqui (fora do escopo da ADE).
+var gatewayKeyClusters = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+{
+    BackendV1ClusterId,
+    FunctionsF1ClusterId,
+    McpServerClusterId,
+};
 
 // -----------------------------------------------------------------------------
 // YARP reverse proxy (ADE-004 Inv 1 e 2): rotas/clusters do appsettings.json +
@@ -115,15 +136,14 @@ builder.Services
             return ValueTask.CompletedTask;
         });
 
-        // Quartas / "admin 100% workforce" — injeta X-Gateway-Key APENAS nas rotas do
-        // cluster backend-v1 (/admin/*). O escopo é decidido em tempo de CONFIG: o
-        // callback de transforms roda por rota, então só ANEXAMOS o transform quando a
-        // rota aponta pro backend-v1. Assim o segredo NUNCA vaza para outros clusters
-        // (functions-f1, mcp-server, flow-events) — nem é avaliado por request.
-        if (string.Equals(
-                transformBuilderContext.Cluster?.ClusterId,
-                BackendV1ClusterId,
-                StringComparison.OrdinalIgnoreCase))
+        // Quartas + EPIC-004 Story 4.2 (ADE-009 Inv 1) — injeta X-Gateway-Key nas rotas
+        // dos clusters CONFIÁVEIS (backend-v1, functions-f1, mcp-server). O escopo é
+        // decidido em tempo de CONFIG: o callback de transforms roda por rota, então só
+        // ANEXAMOS o transform quando a rota aponta pra um cluster do conjunto. Assim o
+        // segredo NUNCA vaza para o cluster flow-events (fora do escopo da ADE-009 Inv 1)
+        // — nem é avaliado por request nele.
+        if (transformBuilderContext.Cluster?.ClusterId is { } clusterId &&
+            gatewayKeyClusters.Contains(clusterId))
         {
             transformBuilderContext.AddRequestTransform(transformContext =>
             {
@@ -132,7 +152,7 @@ builder.Services
                 transformContext.ProxyRequest.Headers.Remove(GatewayKeyHeader);
 
                 // Só injeta quando o segredo está configurado (vazio = injeção desligada,
-                // backend cai no fluxo legado v1 — paridade com GATEWAY_SHARED_SECRET vazio).
+                // backend cai no fluxo legado — paridade com GATEWAY_SHARED_SECRET vazio).
                 if (!string.IsNullOrEmpty(adminSharedSecret))
                 {
                     transformContext.ProxyRequest.Headers.TryAddWithoutValidation(
