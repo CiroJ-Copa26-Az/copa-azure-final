@@ -74,7 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     init();
   }, []);
 
-  // ---------------------------------------------------------------------------
+  // ----------------------------------------------------------------------------
   // Story 3.5 (ADE-007 Inv 8) — UNIFICAÇÃO v1 ↔ CIAM no FRONT. Havendo sessão CIAM
   // (Login v2) e NÃO havendo sessão v1, hidrata o AuthContext a partir do /api/v2/me
   // (resolve-or-provision → users.id) + os claims da conta CIAM. Assim o cliente nato-CIAM
